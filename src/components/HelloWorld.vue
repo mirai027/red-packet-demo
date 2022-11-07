@@ -1,16 +1,11 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { RedPacketType } from '../typings/type';
-import { getHashColor, loadImages } from '../utils';
+import { getHashColor, getRandomArbitrary, loadImages } from '../utils';
 
-const redPacketsCanvasRef = ref<HTMLCanvasElement>()
-const redPacketsContext = ref<ReturnType<typeof initCanvas>>()
-const hitSubCanvasRef = ref<HTMLCanvasElement>()
-const hitSubCanvasContext = ref<ReturnType<typeof initCanvas>>()
-
-const redPacketList = ref<Record<number | string, RedPacketType>>({})
-const rafRedPacketsMove = ref<number>()
-const redPacketAccumIndex = ref(1)
+const gameContainerRef = ref<HTMLElement>()
+const redPacketList = ref<number[]>([])
+const hitedPacketIdList = ref<number[]>([])
 
 type MockConfigType = {
   width?: number
@@ -22,10 +17,11 @@ type MockConfigType = {
   screenPadding?: number
   split?: number
   totalPackets?: number
+  padding?: number
 }
 const props = withDefaults(defineProps<MockConfigType>(), {
-  width: 60,
-  height: 75.75,
+  width: 147,
+  height: 186,
   speed: 3,
   imageUrl: 'game-red-packet.png',
   maxRotateDeg: 30,
@@ -36,194 +32,210 @@ const props = withDefaults(defineProps<MockConfigType>(), {
   padding: 20,
 })
 
-function initCanvas(
-  canvasElement: HTMLCanvasElement,
-  params: { width?: number; height?: number } = {}
-) {
-  const canvasWidth = params.width ?? window.innerWidth
-  const canvasHeight = params.height ?? window.innerHeight
+function hitPacket(id: number) {
+  if (!hitedPacketIdList.value.includes(id)) {
+    hitedPacketIdList.value.push(id)
+    const hitEl = document.querySelector(`#packet-${id}`)
 
-  canvasElement.width = canvasWidth
-  canvasElement.height = canvasHeight
-
-  return {
-    ctx: canvasElement.getContext('2d')!,
-    params: {
-      width: canvasWidth,
-      height: canvasHeight,
-    },
+    if (gameContainerRef.value && hitEl) {
+      const { top, left, width, height } = hitEl.getBoundingClientRect()
+      gameContainerRef.value.removeChild(hitEl)
+      const topPoint = top + height / 2
+      const lefPoint = left + width / 2
+      const hitImageEl = document.createElement('img')
+      hitImageEl.classList.add('hit-animation')
+      hitImageEl.src = new URL(`../assets/add-done.png`, import.meta.url).href
+      hitImageEl.style.position = 'absolute'
+      hitImageEl.style.top = topPoint + 'px'
+      hitImageEl.style.left = lefPoint + 'px'
+      hitImageEl.style.width = getPx2VWSize(96) + 'px'
+      hitImageEl.style.height = getPx2VWSize(50) + 'px'
+      document.body.appendChild(hitImageEl)
+      setTimeout(() => {
+        document.body.removeChild(hitImageEl)
+      }, 800)
+    }
   }
 }
 
-async function createRedPacketItemObject({ x, y }: { x: number; y: number }) {
+function createRedPacket(xPonit: number) {
   const id = Math.random() * 1e18
-  const { width, height, imageUrl, speed } = props
-  const config: RedPacketType = {
-    id,
-    x,
-    y: y - height * 1.5,
-    width,
-    height,
-    imageEl: await loadImages(imageUrl),
-    speed,
-    rotate: 0,
-    rotateSpeed: Math.round(Math.random()) ? 0.2 : -0.2,
-    subHitColor: getHashColor(Object.values(redPacketList.value).map((x) => x.subHitColor ?? '')),
-    zIndex: redPacketAccumIndex.value++
-  }
+  redPacketList.value.push(id)
 
-  redPacketList.value[id] = config
+  const { width, height, imageUrl, padding } = props
 
-  return config
+  const packetWrapperEl = document.createElement('div')
+  packetWrapperEl.classList.add('red-packet-img-wrapper')
+  packetWrapperEl.id = 'packet-' + id
+  packetWrapperEl.style.width = getPx2VWSize(width) + 'px'
+  packetWrapperEl.style.height = getPx2VWSize(height) + getPx2VWSize(padding * 2) + 'px'
+  packetWrapperEl.style.left = xPonit + 'px'
+
+  const packetEl = document.createElement('img')
+  // packetEl.ondragstart = () => false
+  packetEl.src = new URL(`../assets/${imageUrl}`, import.meta.url).href
+  packetEl.classList.add('red-packet-img')
+  packetEl.style.padding = `${getPx2VWSize(padding)}px 0`
+
+  setTimeout(() => {
+    packetEl.style.transform = `rotate(${Math.random() > 0.5 ? 30 : -30}deg)`
+  }, 100);
+  // packetEl.onclick = () => hitPacket(id)
+  packetWrapperEl.appendChild(packetEl)
+  gameContainerRef.value!.appendChild(packetWrapperEl)
 }
 
-async function renderRedPacketItem() {
-  if (redPacketsContext.value && hitSubCanvasContext.value) {
-    const { ctx, params: canvasParams } = redPacketsContext.value
-    const { ctx: hitCtx } = hitSubCanvasContext.value
-    ctx.clearRect(0, 0, canvasParams.width, canvasParams.height)
-    hitCtx.clearRect(0, 0, canvasParams.width, canvasParams.height)
-
-    for (const [id, redPacket] of Object.entries(redPacketList.value)) {
-      const { y, speed } = redPacket
-      rotateRedPicketElement(ctx, redPacket, hitCtx)
-      redPacketList.value[id].y = y + speed
-
-      if (redPacketList.value[id].y > canvasParams.height) {
-        console.log(`[hidden-delete-${id}]`, redPacketList.value[id])
-        delete redPacketList.value[id]
-      }
-    }
-
-    rafRedPacketsMove.value = requestAnimationFrame(renderRedPacketItem)
-  }
-}
-
-function rotateRedPicketElement(
-  ctx: CanvasRenderingContext2D,
-  params: RedPacketType,
-  hitCtx: CanvasRenderingContext2D
-) {
-  function rotateThresholdValue(rotate: number) {
-    const { maxRotateDeg } = props
-    if (Math.abs(rotate) >= maxRotateDeg) {
-      return rotate > 0 ? maxRotateDeg : -maxRotateDeg
-    }
-    return rotate
-  }
-
-  ctx.save()
-  const { id, x, y, width, height, rotate, imageEl, rotateSpeed, subHitColor } = params
-  const centerPointPosition = {
-    x: x + width / 2,
-    y: y + height / 2,
-  }
-  ctx.translate(centerPointPosition.x, centerPointPosition.y)
-  ctx.rotate((rotate * Math.PI) / 180)
-  ctx.translate(-centerPointPosition.x, -centerPointPosition.y)
-  ctx.drawImage(imageEl, x, y, width, height)
-  ctx.restore()
-
-  hitCtx.save()
-  hitCtx.translate(centerPointPosition.x, centerPointPosition.y)
-  hitCtx.rotate((rotate * Math.PI) / 180)
-  hitCtx.translate(-centerPointPosition.x, -centerPointPosition.y)
-  hitCtx.fillStyle = subHitColor
-  hitCtx.fillRect(x, y, width, height)
-  hitCtx.restore()
-
-  redPacketList.value[id].rotate = rotateThresholdValue(rotate + rotateSpeed)
-}
-
-function clickCanvas(e: MouseEvent, ctx: CanvasRenderingContext2D) {
-  const { offsetX, offsetY } = e
-  const isClickArray = []
 
 
-  for (const [id, redPacketItem] of Object.entries(redPacketList.value)) {
-    const { width, height, x, y } = redPacketItem
-    const point = {
-      x1: x,
-      y1: y,
-      x2: x + width,
-      y2: y + height
-    }
-    const isHandle = offsetX >= point.x1 && offsetX <= point.x2 && offsetY >= point.y1 && offsetY <= point.y2
-    if (isHandle) {
-      isClickArray.push(redPacketItem)
-    }
-  }
-
-  if (isClickArray[0]) {
-    const sortArray = isClickArray.sort((a, b) => b.zIndex - a.zIndex)
-    const { id } = sortArray[0]
-    delete redPacketList.value[id]
-  }
-}
-
-function hitSubCanvas(e: MouseEvent, ctx: CanvasRenderingContext2D) {
-  const { offsetX, offsetY } = e
-
-  const [r, g, b] = ctx.getImageData(offsetX, offsetY, 1, 1).data
-  const rgb = `rgb(${r},${g},${b})`
-
-  const hitRedPacketItem = Object.values(redPacketList.value).find((x) => x.subHitColor === rgb)
-
-  if (hitRedPacketItem) {
-    console.log(`[hit-delete-${hitRedPacketItem.id}]`, hitRedPacketItem)
-    delete redPacketList.value[hitRedPacketItem.id]
-  }
-}
 
 function computedXPoint() {
   const { split, screenPadding, width } = props
-  const maxScreenWidth = window.innerWidth - screenPadding * 2
-  const maxFreeSpace = maxScreenWidth - width * split
+  const maxScreenWidth = (window.innerWidth > 750 ? 750 : window.innerWidth) - screenPadding * 2
+  const maxFreeSpace = maxScreenWidth - getPx2VWSize(width) * split
   const marginSpace = maxFreeSpace / (split + 1)
-  return Object.keys([...Array(split)]).map(Number).map(x => screenPadding + marginSpace + (width + marginSpace) * x)
+  return Object.keys([...Array(split)]).map(Number).map(x => screenPadding + marginSpace + (getPx2VWSize(width) + marginSpace) * x)
 }
 
 function getRandomArray(array: number[]) {
   return array.sort(() => 0.5 - Math.random())
 }
 
-onMounted(async () => {
-  if (redPacketsCanvasRef.value && hitSubCanvasRef.value) {
-    redPacketsContext.value = initCanvas(redPacketsCanvasRef.value)
-    hitSubCanvasContext.value = initCanvas(hitSubCanvasRef.value)
+function watchPacketList() {
+  const clientHeight = document.documentElement.clientHeight
+  redPacketList.value.forEach(packetId => {
+    const packetElement = document.querySelector(`#packet-${packetId}`)
 
-    const pointList = computedXPoint()
-    const { split, totalPackets } = props
-    const allPointList = [...Array(Math.ceil(totalPackets / split))].map(() => getRandomArray(pointList)).flat().splice(0, totalPackets).map(Math.ceil)
-
-    let index = 0
-    let timer: number | null = null
-    createRedPacketItemObject({ x: allPointList[index++], y: 0 })
-    timer = setInterval(() => {
-      if (index >= totalPackets - 1) {
-        clearInterval(timer!)
+    if (packetElement && gameContainerRef.value) {
+      const top = packetElement.getBoundingClientRect().top
+      if (top >= clientHeight) {
+        gameContainerRef.value.removeChild(packetElement)
       }
-      createRedPacketItemObject({ x: allPointList[index++], y: 0 })
-    }, 700)
+    }
+  })
+}
 
-    renderRedPacketItem()
+function getPx2VWSize(pixel: number) {
+  const maxWindowInnerWidth = window.innerWidth > 750 ? 750 : window.innerWidth
+  const design1px2vw = 1 / (750 / 100)
+  const current1px2vw = pixel * design1px2vw * (maxWindowInnerWidth / 100)
+  return current1px2vw
+}
 
-    hitSubCanvasRef.value.addEventListener('click', (e) =>
-      hitSubCanvas(e, hitSubCanvasContext.value!.ctx)
-    )
+onMounted(async () => {
+  const pointList = computedXPoint()
+  const { split, totalPackets } = props
+  const allPointList = [...Array(Math.ceil(totalPackets / split))].map(() => getRandomArray(pointList)).flat().splice(0, totalPackets).map(Math.ceil)
+
+  let index = 0
+  let timer: number | null = null
+  createRedPacket(allPointList[index++])
+  timer = setInterval(() => {
+    if (index >= totalPackets - 1) {
+      clearInterval(timer!)
+    }
+    createRedPacket(allPointList[index++])
+  }, 700)
+
+  setInterval(() => {
+    watchPacketList()
+  }, 1000);
+
+  if (gameContainerRef.value) {
+    gameContainerRef.value.addEventListener('click', (e) => {
+      const hitClassName = (e.target as HTMLElement).className
+      if (hitClassName === 'red-packet-img') {
+
+        const hitEl = (e as any).path[1]
+        const id = hitEl.id
+
+        if (!hitedPacketIdList.value.includes(id)) {
+          hitedPacketIdList.value.push(id)
+          const { top, left, width, height } = hitEl.getBoundingClientRect()
+          gameContainerRef.value!.removeChild(hitEl)
+          const topPoint = top + height / 2
+          const lefPoint = left + width / 2
+          const hitImageEl = document.createElement('img')
+          hitImageEl.classList.add('hit-animation')
+          hitImageEl.src = new URL(`../assets/add-done.png`, import.meta.url).href
+          hitImageEl.style.position = 'absolute'
+          hitImageEl.style.top = topPoint + 'px'
+          hitImageEl.style.left = lefPoint + 'px'
+          hitImageEl.style.width = getPx2VWSize(96) + 'px'
+          hitImageEl.style.height = getPx2VWSize(50) + 'px'
+          document.body.appendChild(hitImageEl)
+          setTimeout(() => {
+            document.body.removeChild(hitImageEl)
+          }, 800)
+        }
+      }
+    })
   }
 })
 </script>
 
 <template>
-  <canvas ref="redPacketsCanvasRef" />
-  <canvas ref="hitSubCanvasRef" style="opacity: 0" />
+  <div class="game-container" ref="gameContainerRef"></div>
 </template>
 
-<style>
-canvas {
-  position: absolute;
+<style lang="scss">
+.game-container {
+  width: 100vw;
+  height: 100vh;
+  max-width: 750px;
+  margin: 0 auto;
+  overflow: hidden;
+  position: fixed;
   top: 0;
-  left: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  background-image: url('../assets/game-bg.png');
+  background-position: center;
+  background-size: cover;
+
+  .red-packet-img-wrapper {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform: translateY(-100%);
+    animation: down 3s linear forwards;
+    font-size: 0;
+  }
+
+  .red-packet-img {
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    position: relative;
+    transition: all 3s ease;
+    transform: rotate(0);
+  }
+
+  @keyframes down {
+    0% {
+      transform: translateY(-100%);
+    }
+
+    100% {
+      transform: translateY(110vh);
+    }
+  }
+}
+</style>
+
+<style>
+.hit-animation {
+  animation: rise 0.7s ease forwards;
+}
+
+@keyframes rise {
+  0% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+
+  100% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
 }
 </style>
